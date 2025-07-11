@@ -16,6 +16,7 @@
     #suggestion { font-size: 0.9em; color: #555; font-style: italic; }
     #speedDisplay { margin-top: 0.5em; }
     #speedDisplay span { font-weight: bold; }
+    #debug { font-size: 0.95em; color: #888; margin-top: 0.7em;}
   </style>
 </head>
 <body>
@@ -31,6 +32,11 @@
       <option value="Adult">Adult</option>
       <option value="Youth">Youth</option>
     </select>
+  </div>
+  <div class="controls">
+    <label>Pitching Distance (feet): 
+      <input type="number" id="distanceInput" value="43.0" min="20" step="0.1" style="width:5em;" />
+    </label>
   </div>
   <p id="suggestion">Suggested: Stride = <span id="strideVal">6.0</span> ft, Catcher Offset = <span id="offsetVal">2.0</span> ft (adjustable below).</p>
   <div class="controls">
@@ -58,6 +64,7 @@
     Current Pitch Speed: <span id="currentSpeed">--</span> mph<br/>
     Last 5 Pitches: <span id="speedLog">None</span>
   </div>
+  <div id="debug"></div>
 
   <!-- TensorFlow.js and COCO-SSD scripts -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
@@ -87,6 +94,7 @@
     // UI element references
     const sportSelect = document.getElementById('sportSelect');
     const levelSelect = document.getElementById('levelSelect');
+    const distanceInput = document.getElementById('distanceInput');
     const strideValSpan = document.getElementById('strideVal');
     const offsetValSpan = document.getElementById('offsetVal');
     const strideInput = document.getElementById('strideInput');
@@ -103,6 +111,7 @@
     const ctx = canvas.getContext('2d');
     const currentSpeedSpan = document.getElementById('currentSpeed');
     const speedLogSpan = document.getElementById('speedLog');
+    const debugDiv = document.getElementById('debug');
 
     // Initialize UI defaults
     sportSelect.value = "Baseball";
@@ -119,8 +128,10 @@
       modelLoaded = true;
       startButton.disabled = false;
       videoFileInput.disabled = false;
+      debugDiv.textContent = "Model loaded!";
       console.log("Model loaded.");
     }).catch(err => {
+      debugDiv.textContent = "Model failed to load.";
       console.error("Model failed to load:", err);
     });
 
@@ -135,6 +146,7 @@
         offsetValSpan.textContent = vals.offset.toFixed(1);
         strideInput.value = vals.stride;
         offsetInput.value = vals.offset;
+        distanceInput.value = baseDistances[key];
       }
     }
 
@@ -176,7 +188,7 @@
         startButton.style.display = 'none';
       })
       .catch(error => {
-        console.error("Error accessing camera:", error);
+        debugDiv.textContent = "Error accessing camera: " + error.message;
         alert("Error accessing camera: " + error.message);
       });
     });
@@ -240,11 +252,13 @@
       model.detect(video).then(predictions => {
         // Filter for "sports ball" predictions above confidence threshold
         const balls = predictions.filter(p => p.class === 'sports ball' && p.score > 0.5);
+        let debugMsg = "Detected: ";
         if (balls.length > 0) {
           const ball = balls[0];
           const [x, y, w, h] = ball.bbox;
           const centerX = x + w/2;
           const centerY = y + h/2;
+          debugMsg += `score=${(ball.score*100).toFixed(1)}%`;
           if (!tracking) {
             // Ball appeared – start of a new pitch
             tracking = true;
@@ -270,7 +284,7 @@
           // Update last seen time (ms)
           lastDetectTime = video.srcObject ? performance.now() : (video.currentTime * 1000);
         } else {
-          // No ball detected in this frame
+          debugMsg += "none";
           if (tracking) {
             noBallCount++;
             if (noBallCount >= 3) {
@@ -279,6 +293,7 @@
             }
           }
         }
+        debugDiv.textContent = debugMsg;
         // Continue the loop
         if (running) {
           requestAnimationFrame(detectFrame);
@@ -293,27 +308,18 @@
       const durationMs = lastDetectTime - startTime;
       if (durationMs <= 0) return;
       const timeSec = durationMs / 1000;
-      // Calculate distance (feet) = base distance - stride + offset
-      const key = sportSelect.value + " " + levelSelect.value;
-      const baseDist = baseDistances[key] || 60.5;
+      // Calculate distance (feet) = pitching distance - stride + offset
+      const baseDist = parseFloat(distanceInput.value) || 43.0;
       const strideFt = parseFloat(strideInput.value) || 0;
       const offsetFt = parseFloat(offsetInput.value) || 0;
       const distanceFt = baseDist - strideFt + offsetFt;
       // Compute speed in mph (1 ft/s = 0.681818 mph)
       let speedMph = (distanceFt / timeSec) * 0.681818;
       speedMph = Math.round(speedMph);
-      // Update current speed display
       currentSpeedSpan.textContent = speedMph;
-      // Log the speed in history (keep last 5)
       speedHistory.push(speedMph);
-      if (speedHistory.length > 5) {
-        speedHistory.shift();
-      }
-      if (speedHistory.length > 0) {
-        speedLogSpan.textContent = speedHistory.map(s => s + " mph").join(", ");
-      } else {
-        speedLogSpan.textContent = "None";
-      }
+      if (speedHistory.length > 5) speedHistory.shift();
+      speedLogSpan.textContent = speedHistory.length > 0 ? speedHistory.map(s => s + " mph").join(", ") : "None";
     }
 
     // Adjust canvas size to match video element (for responsiveness)
