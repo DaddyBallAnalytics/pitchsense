@@ -2,420 +2,327 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>AI Pitch Radar</title>
-  <meta name="viewport" content="width=560, initial-scale=1.0">
-  <!-- TensorFlow.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
-  <!-- COCO-SSD model -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@3.3.0/dist/coco-ssd.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Pitch Speed Radar</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 10px; background: #f4f4f4; }
+    h1 { font-size: 1.5em; }
+    .controls { margin: 0.5em 0; }
+    .controls label { margin-right: 1em; }
+    #videoContainer { position: relative; width: 100%; max-width: 640px; }
+    video { background: #000; width: 100%; height: auto; }
+    canvas { position: absolute; top: 0; left: 0; width: 100%; height: auto; }
+    #startButton, #stopButton { margin-right: 1em; }
+    #suggestion { font-size: 0.9em; color: #555; font-style: italic; }
+    #speedDisplay { margin-top: 0.5em; }
+    #speedDisplay span { font-weight: bold; }
+  </style>
 </head>
 <body>
-  <div id="pitchRadarRoot"></div>
-  <script>
-(async function(){
-  // --- Styles and UI ---
-  const root = document.getElementById('pitchRadarRoot');
-  root.innerHTML = `
-  <style>
-    body, #pitchRadarRoot { font-family: Arial, sans-serif; text-align: center; margin: 0; padding: 0; }
-    #controls { margin-bottom: 10px; }
-    label { margin-right: 10px; }
-    #videoInputSection { margin: 5px 0; }
-    .mainContent { display: flex; justify-content: center; align-items: flex-start; gap: 32px; margin-top: 20px; flex-wrap: wrap; }
-    .videoCol { flex: 0 0 auto; min-width: 320px; position: relative; }
-    .historyCol { flex: 0 0 310px; max-width: 100vw; }
-    @media (max-width: 800px) {
-      .mainContent { flex-direction: column; align-items: center; gap: 0; }
-      .historyCol { margin-top: 18px; }
-    }
-    video { margin: 10px 0; width: 480px; height: auto; max-width: 98vw; border: 1px solid #ccc; background: #000; display:block; }
-    #trackingCanvas { position: absolute; top: 10px; left: 0; pointer-events: none; }
-    #status, #speedDisplay { font-weight: bold; }
-    .info { font-size: 0.9em; color: #555; }
-    select, input[type=number] { margin: 0 10px; }
-    .offsets { margin-top: 8px; }
-    #historyBox { background: #f9f9f9; border: 1px solid #aaa; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); padding: 10px; min-width: 230px; }
-    #historyBox h4 { margin: 0 0 8px 0; }
-    #pitchHistory { list-style: decimal; padding-left: 25px; text-align: left; margin: 0; }
-    #pitchHistory li { margin-bottom: 2px; font-size: 1.02em; }
-    .loading { color: #b70; font-weight: bold; }
-  </style>
-  <div id="controls">
-    <label>Sport: 
-      <select id="sportSelect">
-        <option value="baseball">Baseball</option>
-        <option value="softball">Softball</option>
-      </select>
-    </label>
-    <label>Level:
-      <select id="levelSelect">
-        <option value="adult">Adult</option>
-        <option value="youth">Youth</option>
-      </select>
-    </label>
-    <br/>
-    <label>Pitching Distance (feet): 
-      <input type="number" id="distanceInput" value="60.5" min="1" style="width: 6em;" />
-    </label>
-    <div class="offsets">
-      <label>Pitcher's Stride (ft, subtract): 
-        <input type="number" id="strideInput" value="7" min="0" max="10" step="0.1" style="width: 5em;" />
-      </label>
-      <label>Catcher's Offset (ft, add): 
-        <input type="number" id="catcherInput" value="2" min="-5" max="10" step="0.1" style="width: 5em;" />
-      </label>
-    </div>
-    <span class="info" id="autoInfo"></span>
-    <br/>
-    <input type="radio" name="mode" id="modeLive" value="live" checked />
-    <label for="modeLive">Use Live Camera</label>
-    <input type="radio" name="mode" id="modeVideo" value="video" />
-    <label for="modeVideo">Upload Video</label>
-    <div id="videoInputSection" style="display: none;">
-      <input type="file" id="videoFileInput" accept="video/*" />
-    </div>
+  <h1>AI Pitch Speed Radar</h1>
+  <div class="controls">
+    <label for="sportSelect">Sport:</label>
+    <select id="sportSelect">
+      <option value="Baseball">Baseball</option>
+      <option value="Softball">Softball</option>
+    </select>
+    <label for="levelSelect">Level:</label>
+    <select id="levelSelect">
+      <option value="Adult">Adult</option>
+      <option value="Youth">Youth</option>
+    </select>
+  </div>
+  <p id="suggestion">Suggested: Stride = <span id="strideVal">6.0</span> ft, Catcher Offset = <span id="offsetVal">2.0</span> ft (adjustable below).</p>
+  <div class="controls">
+    <label><input type="radio" name="sourceMode" value="camera" id="modeCamera"> Use Live Camera</label>
+    <label><input type="radio" name="sourceMode" value="upload" id="modeUpload"> Upload Video</label>
+  </div>
+  <div class="controls">
+    <label for="strideInput">Stride (ft):</label>
+    <input type="number" id="strideInput" value="6.0" step="0.1" />
+    <label for="offsetInput">Catcher Offset (ft):</label>
+    <input type="number" id="offsetInput" value="2.0" step="0.1" />
+  </div>
+  <div class="controls" id="cameraControls" style="display:none;">
     <button id="startButton">Start Camera</button>
-    <button id="stopButton" style="display: none;">Stop</button>
-    <span class="loading" id="loadingMsg" style="margin-left:10px; display:none;">Loading AI model...</span>
+    <button id="stopButton" style="display:none;">Stop Camera</button>
   </div>
-  <div class="mainContent">
-    <div class="videoCol" id="videoCol">
-      <video id="video" playsinline autoplay muted></video>
-      <canvas id="trackingCanvas"></canvas>
-      <p id="status">Status: Idle</p>
-      <p id="speedDisplay">Pitch Speed: N/A</p>
-    </div>
-    <div class="historyCol">
-      <div id="historyBox">
-        <h4>Pitch History (last 5)</h4>
-        <ol id="pitchHistory"></ol>
-      </div>
-    </div>
+  <div class="controls" id="uploadControls" style="display:none;">
+    <input type="file" id="videoFileInput" accept="video/*" />
   </div>
-  `;
+  <div id="videoContainer">
+    <video id="video" width="640" height="480" playsinline></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+  </div>
+  <div id="speedDisplay">
+    Current Pitch Speed: <span id="currentSpeed">--</span> mph<br/>
+    Last 5 Pitches: <span id="speedLog">None</span>
+  </div>
 
-  const strideTable = { baseball: { adult: 7, youth: 5.5 }, softball: { adult: 6, youth: 4.5 } };
-  const catcherTable = { baseball: { adult: 2, youth: 1.5 }, softball: { adult: 2, youth: 1.5 } };
-  const videoElem = root.querySelector('#video');
-  const distanceInput = root.querySelector('#distanceInput');
-  const sportSelect = root.querySelector('#sportSelect');
-  const levelSelect = root.querySelector('#levelSelect');
-  const strideInput = root.querySelector('#strideInput');
-  const catcherInput = root.querySelector('#catcherInput');
-  const autoInfo = root.querySelector('#autoInfo');
-  const modeLiveRadio = root.querySelector('#modeLive');
-  const modeVideoRadio = root.querySelector('#modeVideo');
-  const videoInputSection = root.querySelector('#videoInputSection');
-  const videoFileInput = root.querySelector('#videoFileInput');
-  const startButton = root.querySelector('#startButton');
-  const stopButton = root.querySelector('#stopButton');
-  const statusText = root.querySelector('#status');
-  const speedDisplay = root.querySelector('#speedDisplay');
-  const pitchHistoryList = root.querySelector('#pitchHistory');
-  const videoCol = root.querySelector('#videoCol');
-  const trackingCanvas = root.querySelector('#trackingCanvas');
-  const loadingMsg = root.querySelector('#loadingMsg');
-  let currentStream = null;
-  let analyzing = false;
-  let isDetecting = false;
-  let lastBallTime = 0;
-  let startTime = 0;
-  let ignoreUntil = 0;
-  let gotDetection = false;
-  let currentFileURL = null;
-  let pitchHistory = [];
-  let ballPath = [];
-  let framesWithBall = [];
-  const postPitchCooldown = 500;
+  <!-- TensorFlow.js and COCO-SSD scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script>
+    let model;
+    let modelLoaded = false;
+    let tracking = false;
+    let running = false;
+    let noBallCount = 0;
+    let lastX = null, lastY = null;
+    let startTime = 0, lastDetectTime = 0;
+    const speedHistory = [];
+    const baseDistances = {
+      "Baseball Adult": 60.5,
+      "Baseball Youth": 46.0,
+      "Softball Adult": 43.0,
+      "Softball Youth": 40.0
+    };
+    const defaultValues = {
+      "Baseball Adult": {stride: 6.0, offset: 2.0},
+      "Baseball Youth": {stride: 5.0, offset: 2.0},
+      "Softball Adult": {stride: 5.0, offset: 1.5},
+      "Softball Youth": {stride: 4.5, offset: 1.5}
+    };
 
-  function updateAutoInfo() {
-    const sport = sportSelect.value;
-    const level = levelSelect.value;
-    const stride = strideTable[sport][level];
-    const catcher = catcherTable[sport][level];
-    autoInfo.textContent = `Suggested: Stride = ${stride} ft, Catcher Offset = ${catcher} ft (adjustable below).`;
-  }
-  function setDefaultsForSelection() {
-    const sport = sportSelect.value;
-    const level = levelSelect.value;
-    if (sport === "baseball" && level === "adult") distanceInput.value = 60.5;
-    else if (sport === "baseball" && level === "youth") distanceInput.value = 46;
-    else if (sport === "softball" && level === "adult") distanceInput.value = 43;
-    else if (sport === "softball" && level === "youth") distanceInput.value = 35;
-    strideInput.value = strideTable[sport][level];
-    catcherInput.value = catcherTable[sport][level];
-    updateAutoInfo();
-  }
-  sportSelect.onchange = setDefaultsForSelection;
-  levelSelect.onchange = setDefaultsForSelection;
-  setDefaultsForSelection();
+    // UI element references
+    const sportSelect = document.getElementById('sportSelect');
+    const levelSelect = document.getElementById('levelSelect');
+    const strideValSpan = document.getElementById('strideVal');
+    const offsetValSpan = document.getElementById('offsetVal');
+    const strideInput = document.getElementById('strideInput');
+    const offsetInput = document.getElementById('offsetInput');
+    const modeCamera = document.getElementById('modeCamera');
+    const modeUpload = document.getElementById('modeUpload');
+    const cameraControls = document.getElementById('cameraControls');
+    const uploadControls = document.getElementById('uploadControls');
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const videoFileInput = document.getElementById('videoFileInput');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const currentSpeedSpan = document.getElementById('currentSpeed');
+    const speedLogSpan = document.getElementById('speedLog');
 
-  function updateHistoryDisplay() {
-    pitchHistoryList.innerHTML = '';
-    pitchHistory.forEach(entry => {
-      const li = document.createElement('li');
-      li.textContent = entry;
-      pitchHistoryList.appendChild(li);
+    // Initialize UI defaults
+    sportSelect.value = "Baseball";
+    levelSelect.value = "Adult";
+    updateSuggestedValues();
+    modeCamera.checked = true;
+    showRelevantControls();
+    startButton.disabled = true;
+    videoFileInput.disabled = true;
+
+    // Load the COCO-SSD model
+    cocoSsd.load().then(function(loadedModel) {
+      model = loadedModel;
+      modelLoaded = true;
+      startButton.disabled = false;
+      videoFileInput.disabled = false;
+      console.log("Model loaded.");
+    }).catch(err => {
+      console.error("Model failed to load:", err);
     });
-    if (!pitchHistory.length) {
-      pitchHistoryList.innerHTML = '<li><span style="color:#aaa;">No pitches yet.</span></li>';
-    }
-  }
-  updateHistoryDisplay();
 
-  // --- Tracking canvas helpers ---
-  function resizeTrackingCanvas() {
-    const rect = videoElem.getBoundingClientRect();
-    trackingCanvas.width = videoElem.videoWidth || 480;
-    trackingCanvas.height = videoElem.videoHeight || 360;
-    trackingCanvas.style.width = videoElem.style.width || rect.width + "px";
-    trackingCanvas.style.height = videoElem.style.height || rect.height + "px";
-  }
-  function clearTrackingCanvas() {
-    resizeTrackingCanvas();
-    const tctx = trackingCanvas.getContext('2d');
-    tctx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
-  }
-  function drawTrackingPath(path) {
-    const tctx = trackingCanvas.getContext('2d');
-    tctx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
-    if (!path || path.length < 2) return;
-    tctx.save();
-    tctx.strokeStyle = "yellow";
-    tctx.lineWidth = 3;
-    tctx.beginPath();
-    tctx.moveTo(path[0][0], path[0][1]);
-    for (let i = 1; i < path.length; i++) {
-      tctx.lineTo(path[i][0], path[i][1]);
-    }
-    tctx.stroke();
-    // Draw dots
-    for (const [x, y] of path) {
-      tctx.beginPath();
-      tctx.arc(x, y, 6, 0, 2 * Math.PI);
-      tctx.fillStyle = "yellow";
-      tctx.fill();
-      tctx.strokeStyle = "black";
-      tctx.lineWidth = 1;
-      tctx.stroke();
-    }
-    tctx.restore();
-  }
-
-  videoElem.onloadedmetadata = function() {
-    resizeTrackingCanvas();
-    clearTrackingCanvas();
-  };
-  window.addEventListener("resize", resizeTrackingCanvas);
-
-  // --- MAIN PITCH LOGIC with TensorFlow.js COCO-SSD ---
-  loadingMsg.style.display = '';
-  statusText.textContent = "Status: Loading AI model...";
-  const model = await cocoSsd.load();
-  loadingMsg.style.display = 'none';
-  statusText.textContent = "Status: Ready";
-
-  async function processFrameAI() {
-    if (!analyzing) return;
-    if (videoElem.readyState < 2) {
-      requestAnimationFrame(processFrameAI);
-      return;
-    }
-    resizeTrackingCanvas();
-    let predictions = [];
-    try {
-      predictions = await model.detect(videoElem);
-    } catch (e) { }
-    // Find "sports ball" predictions
-    const sportsBalls = predictions.filter(p=>p.class==='sports ball' && p.score > 0.25);
-    let cx = null, cy = null;
-    if (sportsBalls.length) {
-      // Use the biggest/confident one
-      let best = sportsBalls.reduce((a,b)=>a.score>b.score?a:b);
-      cx = best.bbox[0]+best.bbox[2]/2;
-      cy = best.bbox[1]+best.bbox[3]/2;
-    }
-    const now = performance.now();
-    if (!isDetecting) {
-      if (sportsBalls.length && now > ignoreUntil) {
-        isDetecting = true;
-        gotDetection = true;
-        startTime = now;
-        lastBallTime = now;
-        ballPath = [];
-        framesWithBall = [];
-        statusText.textContent = "Status: Pitch detected, tracking ball...";
+    // Update suggestions when sport/level changes
+    sportSelect.addEventListener('change', updateSuggestedValues);
+    levelSelect.addEventListener('change', updateSuggestedValues);
+    function updateSuggestedValues() {
+      const key = sportSelect.value + " " + levelSelect.value;
+      const vals = defaultValues[key];
+      if (vals) {
+        strideValSpan.textContent = vals.stride.toFixed(1);
+        offsetValSpan.textContent = vals.offset.toFixed(1);
+        strideInput.value = vals.stride;
+        offsetInput.value = vals.offset;
       }
     }
-    if (isDetecting) {
-      if (sportsBalls.length && cx !== null && cy !== null) {
-        ballPath.push([cx, cy]);
-        framesWithBall.push(now);
-        drawTrackingPath(ballPath.map(([x, y]) => {
-          // Convert from video native coords to canvas size
-          return [
-            x * (trackingCanvas.width / videoElem.videoWidth),
-            y * (trackingCanvas.height / videoElem.videoHeight)
-          ];
-        }));
-        lastBallTime = now;
+
+    // Toggle controls based on selected mode (camera or upload)
+    modeCamera.addEventListener('change', showRelevantControls);
+    modeUpload.addEventListener('change', showRelevantControls);
+    function showRelevantControls() {
+      if (modeCamera.checked) {
+        cameraControls.style.display = 'block';
+        uploadControls.style.display = 'none';
       } else {
-        // End of pitch if no ball detected for a bit
-        if (now - lastBallTime > 180) {
-          const endTime = lastBallTime;
-          const duration = (endTime - startTime) / 1000;
-          let speedMph = 0;
-          if (duration > 0 && ballPath.length > 2) {
-            const mainDistance = parseFloat(distanceInput.value) || 0;
-            const strideFeet = parseFloat(strideInput.value) || 0;
-            const catcherFeet = parseFloat(catcherInput.value) || 0;
-            const distanceFeet = mainDistance - strideFeet + catcherFeet;
-            speedMph = distanceFeet / duration * 0.681818;
-            const sport = sportSelect.value;
-            const level = levelSelect.value;
-            const dist = distanceInput.value;
-            const stride = strideInput.value;
-            const catcher = catcherInput.value;
-            const label = `${speedMph.toFixed(1)} MPH — [${sport} ${level}, Dist:${dist}ft, Stride:${stride}ft, Catcher:${catcher}ft]`;
-            pitchHistory.unshift(label);
-            if (pitchHistory.length > 5) pitchHistory.pop();
-            updateHistoryDisplay();
-          }
-          speedDisplay.textContent = "Pitch Speed: " + (speedMph ? speedMph.toFixed(1) : "0.0") + " MPH";
-          isDetecting = false;
-          ignoreUntil = performance.now() + postPitchCooldown;
-          if (modeLiveRadio.checked) {
-            statusText.textContent = "Status: Waiting for next pitch...";
-          } else {
-            statusText.textContent = "Status: Analyzing video...";
-          }
-        }
+        cameraControls.style.display = 'none';
+        uploadControls.style.display = 'block';
       }
+      // Stop any existing video or stream when switching mode
+      stopCamera();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      tracking = false;
+      running = false;
+      currentSpeedSpan.textContent = "--";
     }
-    if (analyzing) {
-      requestAnimationFrame(processFrameAI);
-    }
-  }
 
-  startButton.onclick = async function() {
-    gotDetection = false;
-    clearTrackingCanvas();
-    if (modeLiveRadio.checked) {
-      try {
-        const constraints = { video: { width: 640, height: 480, facingMode: { ideal: "environment" } }, audio: false };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        currentStream = stream;
-        videoElem.srcObject = stream;
-        videoElem.onloadedmetadata = () => {
-          resizeTrackingCanvas();
-          clearTrackingCanvas();
-          videoElem.play();
-          statusText.textContent = "Status: Waiting for pitch...";
-          startButton.style.display = 'none';
-          stopButton.style.display = 'inline-block';
-          analyzing = true;
-          requestAnimationFrame(processFrameAI);
-        };
-      } catch (err) {
-        alert("Error accessing camera: " + err.message + "\n\nIf you're on mobile, make sure:\n- You allowed camera access\n- Your browser supports getUserMedia\n- If on Wix, the page's iframe has allow=\"camera; microphone\" set.");
-        console.error(err);
-      }
-    } else {
-      if (!videoFileInput.files.length) {
-        alert("Please choose a video file first.");
+    // Start camera on button click
+    startButton.addEventListener('click', function() {
+      if (!modelLoaded) {
+        alert("Model is still loading, please wait...");
         return;
       }
-      videoElem.load();
-      videoElem.onloadedmetadata = () => {
-        resizeTrackingCanvas();
-        clearTrackingCanvas();
-        statusText.textContent = "Status: Analyzing video...";
-        startButton.style.display = 'none';
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false })
+      .then(stream => {
+        video.srcObject = stream;
+        video.setAttribute('playsinline', ''); // allow inline playback on iPhone
+        running = true;
+        video.play();
         stopButton.style.display = 'inline-block';
-        analyzing = true;
-        videoElem.currentTime = 0;
-        videoElem.play().then(() => {
-          requestAnimationFrame(processFrameAI);
-        }).catch(e => {
-          alert("Playback failed: " + e.message);
-          statusText.textContent = "Status: Error playing video.";
-        });
-      };
-      videoElem.onerror = () => {
-        alert("Unable to play the selected video file.");
-        statusText.textContent = "Status: Error loading video.";
-        startButton.disabled = true;
-      };
-    }
-  };
+        startButton.style.display = 'none';
+      })
+      .catch(error => {
+        console.error("Error accessing camera:", error);
+        alert("Error accessing camera: " + error.message);
+      });
+    });
 
-  stopButton.onclick = function() {
-    analyzing = false;
-    isDetecting = false;
-    if (currentStream) {
-      currentStream.getTracks().forEach(track => track.stop());
-      currentStream = null;
+    // Stop camera stream
+    stopButton.addEventListener('click', stopCamera);
+    function stopCamera() {
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+      startButton.style.display = 'inline-block';
+      stopButton.style.display = 'none';
+      running = false;
+      tracking = false;
     }
-    videoElem.pause();
-    videoElem.currentTime = 0;
-    startButton.style.display = 'inline-block';
-    stopButton.style.display = 'none';
-    statusText.textContent = 'Status: Idle';
-    clearTrackingCanvas();
-  };
 
-  modeLiveRadio.onchange = modeVideoRadio.onchange = function() {
-    if (modeVideoRadio.checked) {
-      videoInputSection.style.display = 'block';
-      startButton.textContent = 'Start Analysis';
-      startButton.disabled = !videoFileInput.files.length;
-      if (currentStream) stopButton.onclick();
-    } else {
-      videoInputSection.style.display = 'none';
-      startButton.textContent = 'Start Camera';
-      startButton.disabled = false;
-      if (videoElem.src && !currentStream) {
-        videoElem.pause();
-        videoElem.removeAttribute('src');
-        videoElem.load();
-        if (currentFileURL) {
-          URL.revokeObjectURL(currentFileURL);
-          currentFileURL = null;
+    // Handle video file selection
+    videoFileInput.addEventListener('change', function() {
+      if (!modelLoaded) {
+        alert("Model is still loading, please wait...");
+        return;
+      }
+      const file = videoFileInput.files[0];
+      if (!file) return;
+      // Reset any previous video state
+      stopCamera();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      tracking = false;
+      running = false;
+      currentSpeedSpan.textContent = "--";
+      // Load and play the selected video
+      const fileURL = URL.createObjectURL(file);
+      video.src = fileURL;
+      video.muted = true;
+      video.setAttribute('playsinline', '');
+      running = true;
+      video.play();
+    });
+
+    // Start detection when video data is loaded
+    video.addEventListener('loadeddata', function() {
+      if (running) {
+        requestAnimationFrame(detectFrame);
+      }
+    });
+    // Finalize when video ends (for uploaded videos)
+    video.addEventListener('ended', function() {
+      if (tracking) {
+        finalizePitch();
+      }
+      running = false;
+    });
+
+    // Detection loop: finds the ball and tracks it
+    function detectFrame() {
+      if (!running || !model) return;
+      model.detect(video).then(predictions => {
+        // Filter for "sports ball" predictions above confidence threshold
+        const balls = predictions.filter(p => p.class === 'sports ball' && p.score > 0.5);
+        if (balls.length > 0) {
+          const ball = balls[0];
+          const [x, y, w, h] = ball.bbox;
+          const centerX = x + w/2;
+          const centerY = y + h/2;
+          if (!tracking) {
+            // Ball appeared – start of a new pitch
+            tracking = true;
+            noBallCount = 0;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            lastX = centerX;
+            lastY = centerY;
+            // Record start time (ms)
+            startTime = video.srcObject ? performance.now() : (video.currentTime * 1000);
+          } else {
+            // Ball continues – draw trajectory line
+            noBallCount = 0;
+            ctx.strokeStyle = 'yellow';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(centerX, centerY);
+            ctx.stroke();
+            ctx.closePath();
+            lastX = centerX;
+            lastY = centerY;
+          }
+          // Update last seen time (ms)
+          lastDetectTime = video.srcObject ? performance.now() : (video.currentTime * 1000);
+        } else {
+          // No ball detected in this frame
+          if (tracking) {
+            noBallCount++;
+            if (noBallCount >= 3) {
+              // Ball missing for a few frames – pitch ended
+              finalizePitch();
+            }
+          }
         }
+        // Continue the loop
+        if (running) {
+          requestAnimationFrame(detectFrame);
+        }
+      });
+    }
+
+    // Finalize pitch: calculate speed and update log
+    function finalizePitch() {
+      tracking = false;
+      noBallCount = 0;
+      const durationMs = lastDetectTime - startTime;
+      if (durationMs <= 0) return;
+      const timeSec = durationMs / 1000;
+      // Calculate distance (feet) = base distance - stride + offset
+      const key = sportSelect.value + " " + levelSelect.value;
+      const baseDist = baseDistances[key] || 60.5;
+      const strideFt = parseFloat(strideInput.value) || 0;
+      const offsetFt = parseFloat(offsetInput.value) || 0;
+      const distanceFt = baseDist - strideFt + offsetFt;
+      // Compute speed in mph (1 ft/s = 0.681818 mph)
+      let speedMph = (distanceFt / timeSec) * 0.681818;
+      speedMph = Math.round(speedMph);
+      // Update current speed display
+      currentSpeedSpan.textContent = speedMph;
+      // Log the speed in history (keep last 5)
+      speedHistory.push(speedMph);
+      if (speedHistory.length > 5) {
+        speedHistory.shift();
+      }
+      if (speedHistory.length > 0) {
+        speedLogSpan.textContent = speedHistory.map(s => s + " mph").join(", ");
+      } else {
+        speedLogSpan.textContent = "None";
       }
     }
-    statusText.textContent = 'Status: Idle';
-    speedDisplay.textContent = 'Pitch Speed: N/A';
-    clearTrackingCanvas();
-  };
 
-  videoFileInput.onchange = function() {
-    if (videoFileInput.files && videoFileInput.files.length > 0) {
-      if (currentFileURL) URL.revokeObjectURL(currentFileURL);
-      const file = videoFileInput.files[0];
-      currentFileURL = URL.createObjectURL(file);
-      videoElem.src = currentFileURL;
-      videoElem.load();
-      startButton.disabled = true;
-      videoElem.onloadedmetadata = () => {
-        startButton.disabled = false;
-        videoElem.currentTime = 0;
-        videoElem.pause();
-        statusText.textContent = "Status: Video loaded, ready to analyze.";
-        clearTrackingCanvas();
-      };
-      videoElem.onerror = () => {
-        alert("Unable to play the selected video file.");
-        startButton.disabled = true;
-        statusText.textContent = "Status: Error loading video.";
-      };
-    } else {
-      startButton.disabled = true;
-      statusText.textContent = "Status: No video selected.";
+    // Adjust canvas size to match video element (for responsiveness)
+    function resizeCanvas() {
+      canvas.width = video.clientWidth;
+      canvas.height = video.clientHeight;
     }
-  };
-
-})();
+    window.addEventListener('resize', resizeCanvas);
+    video.addEventListener('loadedmetadata', resizeCanvas);
   </script>
 </body>
 </html>
